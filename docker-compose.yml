@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  damn-ups:
+    build:
+      context: ./server/api
+      dockerfile: Dockerfile
+    container_name: damn-ups
+    ports:
+      - "3000:3000"
+    environment:
+      - SERVER_PORT=3000
+      - UPS_NAME=ups
+      - NUT_UPS_HOST=localhost
+      - NUT_UPS_PORT=3493
+      - POLL_INTERVAL=5000
+      - LOW_BATTERY_THRESHOLD=20
+      - POWER_LOST_THRESHOLD=2
+    devices:
+      - /dev/usb/hiddev0:/dev/usb/hiddev0
+    volumes:
+      - ups-data:/app/data
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+
+  nut-upsd:
+    image: martedler/nut:latest
+    container_name: nut-upsd
+    ports:
+      - "3493:3493"
+    devices:
+      - /dev/usb/hiddev0:/dev/usb/hiddev0
+    environment:
+      - UPS_NAME=ups
+      - UPS_DRIVER=usbhid-ups
+      - UPS_PORT=auto
+    volumes:
+      - nut-config:/etc/nut
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+
+volumes:
+  ups-data:
+  nut-config:

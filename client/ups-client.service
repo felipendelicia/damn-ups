@@ -1,0 +1,17 @@
+[Unit]
+Description=UPS Client Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/usr/local/bin
+ExecStart=/usr/local/bin/ups-client
+Restart=always
+RestartSec=5
+
+Environment=SERVER_URL=http://localhost:3000
+Environment=PROXMOX_ENABLED=false
+
+[Install]
+WantedBy=multi-user.target
