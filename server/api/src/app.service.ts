@@ -3,41 +3,75 @@ import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import { MonitoringService } from './modules/monitoring/monitoring.service';
 import { UpsGateway } from './modules/gateway/ups.gateway';
+import { ConfigStoreService } from './modules/config/config.module';
+import { EventsService } from './modules/clients/events.service';
 import { UpsStatus, PowerLostEvent, ShutdownOrderEvent } from './shared/interfaces/ups.types';
+
+const APP_NAME = 'Damn! Ups';
+const APP_VERSION = '1.0.0';
 
 @Injectable()
 export class AppService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AppService.name);
   private isShuttingDown = false;
   private currentUpsStatus: UpsStatus | null = null;
-  private pollingInterval: NodeJS.Timeout;
+  private consecutivePowerLost = 0;
 
   constructor(
     private configService: ConfigService,
+    private configStore: ConfigStoreService,
     private monitoringService: MonitoringService,
     private upsGateway: UpsGateway,
+    private eventsService: EventsService,
   ) {}
 
+  private pollTimer: NodeJS.Timeout | null = null;
+
   async onModuleInit() {
-    this.logger.log('UPS Monitoring Server started');
+    const config = this.configStore.getConfig();
+    this.logger.log(`⚡ ${APP_NAME} v${APP_VERSION} started`);
+    this.logger.log(`Config: threshold=${config.powerLostThreshold}, poll=${config.pollInterval}ms, mock=${config.mockMode}`);
+    
+    // Register callback for config changes
+    this.configStore.setOnConfigChange(() => this.restartPolling());
+    
     await this.pollUpsStatus();
+    this.startPolling();
   }
 
   async onModuleDestroy() {
-    if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
-    }
+    if (this.pollTimer) clearInterval(this.pollTimer);
     this.logger.log('UPS Monitoring Server stopped');
   }
 
-  @Interval(5000)
-  async pollUpsStatus() {
+  private startPolling() {
+    const config = this.configStore.getConfig();
+    const interval = config.pollInterval || 5000;
+    
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    
+    this.pollTimer = setInterval(() => {
+      this.pollUpsStatus();
+    }, interval);
+  }
+
+  restartPolling() {
+    this.startPolling();
+  }
+
+  private async pollUpsStatus() {
     try {
+      const config = this.configStore.getConfig();
+      
+      // Update monitoring with config
+      this.monitoringService.updateThresholds(config.powerLostThreshold, config.lowBatteryThreshold);
+      
       const status = await this.monitoringService.getUpsStatus();
       
       if (status) {
         this.currentUpsStatus = status;
         this.upsGateway.emitUpsStatusUpdate(status);
+    this.eventsService.upsStatusUpdate(status);
 
         if (this.monitoringService.checkPowerLost(status)) {
           this.handlePowerLost(status);
@@ -46,6 +80,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         if (this.monitoringService.isLowBattery(status)) {
           this.logger.warn(`Low battery: ${status.batteryCharge}%`);
         }
+      } else {
+        this.logger.warn('UPS status unavailable');
       }
     } catch (error) {
       this.logger.error(`Polling error: ${error.message}`);
@@ -56,7 +92,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     if (this.isShuttingDown) return;
     
     this.isShuttingDown = true;
-    this.logger.error('POWER_LOST threshold reached! Initiating shutdown sequence...');
+    this.consecutivePowerLost++;
+    
+    this.logger.error(`🚨 POWER_LOST threshold reached! (${this.consecutivePowerLost})`);
 
     const powerLostEvent: PowerLostEvent = {
       event: 'POWER_LOST',
@@ -65,6 +103,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     };
 
     this.upsGateway.emitPowerLost(powerLostEvent);
+    this.eventsService.powerLost(status);
 
     await this.delay(5000);
 
@@ -75,7 +114,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     };
 
     this.upsGateway.emitShutdownOrder(shutdownEvent);
-    this.logger.warn('Shutdown order sent to all clients');
+    this.eventsService.shutdownOrder('Power lost and threshold reached');
+    this.logger.error('🔴 Shutdown order sent to all clients');
   }
 
   getUpsStatus(): UpsStatus | null {

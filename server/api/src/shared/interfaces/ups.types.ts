@@ -14,6 +14,8 @@ export interface ClientInfo {
   ip: string;
   connectedAt: Date;
   lastHeartbeat: Date;
+  os?: string;
+  version?: string;
 }
 
 export interface PowerLostEvent {
@@ -31,6 +33,7 @@ export interface ShutdownOrderEvent {
 export interface ClientRegisterPayload {
   hostname: string;
   os: string;
+  version?: string;
 }
 
 export interface ClientRegisterResponse {

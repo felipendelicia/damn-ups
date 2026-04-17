@@ -12,18 +12,26 @@ export class MonitoringService {
   private readonly upsName: string;
   private lastPowerLostCount = 0;
   private consecutivePowerLost = 0;
-  private readonly powerLostThreshold: number;
-  private readonly mockMode: boolean;
+  private powerLostThreshold: number;
+  private lowBatteryThreshold: number;
+  private mockMode: boolean;
   private mockStatusCycle = 0;
 
   constructor(private configService: ConfigService) {
     this.upsName = this.configService.get<string>('UPS_NAME', 'ups');
     this.powerLostThreshold = this.configService.get<number>('POWER_LOST_THRESHOLD', 2);
+    this.lowBatteryThreshold = this.configService.get<number>('LOW_BATTERY_THRESHOLD', 20);
     this.mockMode = this.configService.get<boolean>('MOCK_MODE', false);
     
     if (this.mockMode) {
       this.logger.warn('MOCK MODE enabled - Simulating UPS data');
     }
+  }
+
+  updateThresholds(powerLost: number, lowBattery: number): void {
+    this.powerLostThreshold = powerLost;
+    this.lowBatteryThreshold = lowBattery;
+    this.logger.log(`Updated thresholds: powerLost=${powerLost}, lowBattery=${lowBattery}`);
   }
 
   async getUpsStatus(): Promise<UpsStatus | null> {
@@ -123,7 +131,6 @@ export class MonitoringService {
   }
 
   isLowBattery(status: UpsStatus): boolean {
-    const threshold = this.configService.get<number>('LOW_BATTERY_THRESHOLD', 20);
-    return status.batteryCharge < threshold;
+    return status.batteryCharge < this.lowBatteryThreshold;
   }
 }
